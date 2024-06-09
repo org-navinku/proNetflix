@@ -183,11 +183,67 @@ const monec2Instance = new aws.ec2.Instance(config.netflixenv + "-mon", {
     sudo mv consoles/ console_libraries/ /etc/prometheus/
     sudo mv prometheus.yml /etc/prometheus/prometheus.yml
     sudo chown -R prometheus:prometheus /etc/prometheus/ /data/
+    # Clean up temporary files
+    rm -rf /tmp/prometheus-2.47.1.linux-amd64*
+
+    # Create a systemd service for Prometheus
+    sudo bash -c 'cat << EOF > /etc/systemd/system/prometheus.service
+    [Unit]
+    Description=Prometheus
+    Wants=network-online.target
+    After=network-online.target
+
+    StartLimitIntervalSec=500
+    StartLimitBurst=5
+
+    [Service]
+    User=prometheus
+    Group=prometheus
+    Type=simple
+    Restart=on-failure
+    RestartSec=5s
+    ExecStart=/usr/local/bin/prometheus \\
+    --config.file=/etc/prometheus/prometheus.yml \\
+    --storage.tsdb.path=/data \\
+    --web.console.templates=/etc/prometheus/consoles \\
+    --web.console.libraries=/etc/prometheus/console_libraries \\
+    --web.listen-address=0.0.0.0:9090 \\
+    --web.enable-lifecycle
+
+    [Install]
+    WantedBy=multi-user.target
+    EOF'
+
+    # Enable and start Prometheus service
+    sudo systemctl enable prometheus
+    sudo systemctl start prometheus
+    
     sudo useradd --system --no-create-home --shell /bin/false node_exporter
     sudo wget https://github.com/prometheus/node_exporter/releases/download/v1.6.1/node_exporter-1.6.1.linux-amd64.tar.gz
     tar -xvf node_exporter-1.6.1.linux-amd64.tar.gz
     sudo mv node_exporter-1.6.1.linux-amd64/node_exporter /usr/local/bin/
     rm -rf node_exporter*
+
+    # Create a systemd service for Node Exporter
+    sudo bash -c 'cat << EOF > /etc/systemd/system/node_exporter.service
+    [Unit]
+    Description=Node Exporter
+    Wants=network-online.target
+    After=network-online.target
+    
+    [Service]
+    User=node_exporter
+    Group=node_exporter
+    Type=simple
+    ExecStart=/usr/local/bin/node_exporter
+    
+    [Install]
+    WantedBy=default.target
+    EOF'
+
+    sudo systemctl enable node_exporter
+    sudo systemctl start node_exporter
+
     sudo apt-get update
     sudo apt-get install -y apt-transport-https software-properties-common
     sudo wget -q -O - https://packages.grafana.com/gpg.key | sudo apt-key add -
