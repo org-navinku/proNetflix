@@ -22,6 +22,34 @@ const securityGroup = new aws.ec2.SecurityGroup(config.netflixenv, {
         },
         {
             protocol: "tcp",
+            fromPort: 8081,
+            toPort: 8081,
+            cidrBlocks: ["0.0.0.0/0"],
+            description: "Allow port 8081 for Nexus/NetFlix Container"
+        },
+        {
+            protocol: "tcp",
+            fromPort: 9000,
+            toPort: 9000,
+            cidrBlocks: ["0.0.0.0/0"],
+            description: "Allow port 9000 for SonarQube"
+        },
+        {
+            protocol: "tcp",
+            fromPort: 9090,
+            toPort: 9090,
+            cidrBlocks: ["0.0.0.0/0"],
+            description: "Allow port 9090 for Prometheus"
+        },
+        {
+            protocol: "tcp",
+            fromPort: 3000,
+            toPort: 3000,
+            cidrBlocks: ["0.0.0.0/0"],
+            description: "Allow port 3000 for Grafana"
+        },
+        {
+            protocol: "tcp",
             fromPort: 80,
             toPort: 80,
             cidrBlocks: ["0.0.0.0/0"],
@@ -96,12 +124,22 @@ const ec2Instance = new aws.ec2.Instance(config.netflixenv, {
     newgrp docker
     sudo systemctl enable docker
     sudo systemctl start docker
+    git clone https://github.com/navinku/proNetflix.git
+    cd proNetflix/
+    docker build -t netflix .
+    docker run -d --name sonar -p 9000:9000 sonarqube:lts-community
+    sudo apt-get install wget apt-transport-https gnupg lsb-release
+    sudo wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+    echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | sudo tee -a /etc/apt/sources.list.d/trivy.list
+    sudo apt-get update
+    sudo apt-get install trivy -y
     `,
     tags: {
         Name: config.ec2netflix,
         Environment: config.netflixenv,
     },
 });
+
 
 // mkdir -p /home/ubuntu/.ssh
 //     echo '${config.sshkey}' >> /home/ubuntu/.ssh/authorized_keys
@@ -116,3 +154,54 @@ export const ec2netflixInstanceId = ec2Instance.id;
 
 // Export the Jenkins admin URL using the public DNS of the EC2 instance
 export const ec2netflixJenkinsAdminUrl = pulumi.interpolate`http://${ec2Instance.publicDns}:8080`;
+
+// Create monitoring EC2 instance with the defined key pair and volumes
+const monec2Instance = new aws.ec2.Instance(config.netflixenv + "-mon", {
+    ami: config.imageid, // replace with the AMI ID of your choice
+    instanceType: config.instanceType,
+    keyName: config.keypair,
+    rootBlockDevice: {
+        volumeSize: config.rtvolumeSize,
+        deleteOnTermination: true,
+        volumeType: "gp3",
+        tags: {
+            Name: config.ec2netflix + "-Monitoring",
+            Environment: config.netflixenv,
+        },
+    },
+    vpcSecurityGroupIds: [securityGroup.id],
+    subnetId: config.subnetid,
+    associatePublicIpAddress: true,
+    userData: pulumi.interpolate`#!/bin/bash
+    sudo apt-get update
+    sudo useradd --system --no-create-home --shell /bin/false prometheus
+    sudo wget https://github.com/prometheus/prometheus/releases/download/v2.47.1/prometheus-2.47.1.linux-amd64.tar.gz
+    tar -xvf prometheus-2.47.1.linux-amd64.tar.gz
+    cd prometheus-2.47.1.linux-amd64/
+    sudo mkdir -p /data /etc/prometheus
+    sudo mv prometheus promtool /usr/local/bin/
+    sudo mv consoles/ console_libraries/ /etc/prometheus/
+    sudo mv prometheus.yml /etc/prometheus/prometheus.yml
+    sudo chown -R prometheus:prometheus /etc/prometheus/ /data/
+    sudo useradd --system --no-create-home --shell /bin/false node_exporter
+    sudo wget https://github.com/prometheus/node_exporter/releases/download/v1.6.1/node_exporter-1.6.1.linux-amd64.tar.gz
+    tar -xvf node_exporter-1.6.1.linux-amd64.tar.gz
+    sudo mv node_exporter-1.6.1.linux-amd64/node_exporter /usr/local/bin/
+    rm -rf node_exporter*
+    sudo apt-get update
+    sudo apt-get install -y apt-transport-https software-properties-common
+    sudo wget -q -O - https://packages.grafana.com/gpg.key | sudo apt-key add -
+    echo "deb https://packages.grafana.com/oss/deb stable main" | sudo tee -a /etc/apt/sources.list.d/grafana.list
+    sudo apt-get update
+    sudo apt-get -y install grafana
+    sudo systemctl enable grafana-server
+    sudo systemctl start grafana-server
+    `,
+    tags: {
+        Name: config.ec2netflix + "-Monitoring",
+        Environment: config.netflixenv,
+    },
+});
+
+// Export the public IP and instance ID of the EC2 instance
+export const monec2netflixpubIp = monec2Instance.publicIp;

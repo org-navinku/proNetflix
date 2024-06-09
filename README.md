@@ -15,48 +15,34 @@
 </div>
 ### **Phase 1: Initial Setup and Deployment**
 
-**Step 1: Launch EC2 (Ubuntu 22.04):**
+**Step 1: Launch EC2 (Ubuntu 24.04):**
 
-- Provision an EC2 instance on AWS with Ubuntu 22.04.
-- Connect to the instance using SSH.
-
-**Step 2: Clone the Code:**
-
-- Update all the packages and then clone the code.
-- Clone your application's code repository onto the EC2 instance:
-    
+- Clone the code from repo 
     ```bash
     git clone https://github.com/navinku/proNetflix.git
     ```
-    
-
-**Step 3: Install Docker and Run the App Using a Container:**
-
-- Set up Docker on the EC2 instance:
-    
+- Configure awscli
+    - https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
+    - Configure
+        - AccessKey
+        - SecretKey
+        - Region
+- Configure Pulumi
+    - https://www.pulumi.com/docs/install/
+    - Configure
     ```bash
-    
-    sudo apt-get update
-    sudo apt-get install docker.io -y
-    sudo usermod -aG docker $USER  # Replace with your system's username, e.g., 'ubuntu'
-    newgrp docker
-    sudo chmod 777 /var/run/docker.sock
+    pulumi login s3bucket
     ```
-    
-- Build and run your application using Docker containers:
-    
-    ```bash
-    docker build -t netflix .
-    docker run -d --name netflix -p 8081:80 netflix:latest
-    
-    #to delete
-    docker stop <containerid>
-    docker rmi -f netflix
-    ```
+    - Update your Pulumi configuration:
+        ```bash
+        pulumi config set vpcid "vpc-xxxxxxxx"
+        pulumi config set subnetid "subnet-xxxxxxxx"
+        pulumi config set keypair "your-key-pair-name"
+        ```
+- Provision an EC2 instance on AWS with Ubuntu 24.04.
+- Connect to the instance using SSH.
 
-It will show an error cause you need API key
-
-**Step 4: Get the API Key:**
+**Step 3: Get the API Key:**
 
 - Open a web browser and navigate to TMDB (The Movie Database) website.
 - Click on "Login" and create an account.
@@ -73,28 +59,14 @@ docker build --build-arg TMDB_V3_API_KEY=<your-api-key> -t netflix .
 
 **Phase 2: Security**
 
-1. **Install SonarQube and Trivy:**
-    - Install SonarQube and Trivy on the EC2 instance to scan for vulnerabilities.
-        
-        sonarqube
-        ```
-        docker run -d --name sonar -p 9000:9000 sonarqube:lts-community
-        ```
-        
-        
+1. **SonarQube and Trivy:**
+    - SonarQube and Trivy on the EC2 instance to scan for vulnerabilities.
         To access: 
         
         publicIP:9000 (by default username & password is admin)
         
-        To install Trivy:
-        ```
-        sudo apt-get install wget apt-transport-https gnupg lsb-release
-        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
-        echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | sudo tee -a /etc/apt/sources.list.d/trivy.list
-        sudo apt-get update
-        sudo apt-get install trivy        
-        ```
-        
+        For Trivy:
+                
         to scan image using trivy
         ```
         trivy image <imageid>
@@ -107,30 +79,9 @@ docker build --build-arg TMDB_V3_API_KEY=<your-api-key> -t netflix .
 
 **Phase 3: CI/CD Setup**
 
-1. **Install Jenkins for Automation:**
-    - Install Jenkins on the EC2 instance to automate deployment:
-    Install Java
-    
-    ```bash
-    sudo apt update
-    sudo apt install fontconfig openjdk-17-jre
-    java -version
-    openjdk version "17.0.8" 2023-07-18
-    OpenJDK Runtime Environment (build 17.0.8+7-Debian-1deb12u1)
-    OpenJDK 64-Bit Server VM (build 17.0.8+7-Debian-1deb12u1, mixed mode, sharing)
-    
-    #jenkins
-    sudo wget -O /usr/share/keyrings/jenkins-keyring.asc \
-    https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
-    echo deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] \
-    https://pkg.jenkins.io/debian-stable binary/ | sudo tee \
-    /etc/apt/sources.list.d/jenkins.list > /dev/null
-    sudo apt-get update
-    sudo apt-get install jenkins
-    sudo systemctl start jenkins
-    sudo systemctl enable jenkins
-    ```
-    
+1. **Jenkins for Automation:**
+    - Jenkins on the EC2 instance to automate deployment:
+     
     - Access Jenkins in a web browser using the public IP of your EC2 instance.
         
         publicIp:8080
@@ -320,22 +271,25 @@ pipeline{
         stage("Docker Build & Push"){
             steps{
                 script{
+                    withCredentials([string(credentialsId: 'TMDB_API_KEY', variable: 'API_KEY')]) {
+                        // Credentials ID 'TMDB_API_KEY' is retrieved and stored in 'API_KEY' variable.
                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker'){   
-                       sh "docker build --build-arg TMDB_V3_API_KEY=<yourapikey> -t netflix ."
-                       sh "docker tag netflix nasi101/netflix:latest "
-                       sh "docker push nasi101/netflix:latest "
+                       sh "docker build --build-arg TMDB_V3_API_KEY=${API_KEY} -t netflix ."
+                       sh "docker tag netflix navinku/proNetflix:latest "
+                       sh "docker push navinku/proNetflix:latest "
                     }
+                }
                 }
             }
         }
         stage("TRIVY"){
             steps{
-                sh "trivy image nasi101/netflix:latest > trivyimage.txt" 
+                sh "trivy image navinku/proNetflix:latest > trivyimage.txt" 
             }
         }
         stage('Deploy to container'){
             steps{
-                sh 'docker run -d --name netflix -p 8081:80 nasi101/netflix:latest'
+                sh 'docker run -d -p 8081:80 navinku/proNetflix:latest'
             }
         }
     }
@@ -357,36 +311,12 @@ sudo systemctl restart jenkins
 
    Set up Prometheus and Grafana to monitor your application.
 
-   **Installing Prometheus:**
-
-   First, create a dedicated Linux user for Prometheus and download Prometheus:
-
-   ```bash
-   sudo useradd --system --no-create-home --shell /bin/false prometheus
-   wget https://github.com/prometheus/prometheus/releases/download/v2.47.1/prometheus-2.47.1.linux-amd64.tar.gz
-   ```
-
-   Extract Prometheus files, move them, and create directories:
-
-   ```bash
-   tar -xvf prometheus-2.47.1.linux-amd64.tar.gz
-   cd prometheus-2.47.1.linux-amd64/
-   sudo mkdir -p /data /etc/prometheus
-   sudo mv prometheus promtool /usr/local/bin/
-   sudo mv consoles/ console_libraries/ /etc/prometheus/
-   sudo mv prometheus.yml /etc/prometheus/prometheus.yml
-   ```
-
-   Set ownership for directories:
-
-   ```bash
-   sudo chown -R prometheus:prometheus /etc/prometheus/ /data/
-   ```
+   **Prometheus:**
 
    Create a systemd unit configuration file for Prometheus:
 
    ```bash
-   sudo nano /etc/systemd/system/prometheus.service
+   sudo vi /etc/systemd/system/prometheus.service
    ```
 
    Add the following content to the `prometheus.service` file:
@@ -447,25 +377,10 @@ sudo systemctl restart jenkins
 
    **Installing Node Exporter:**
 
-   Create a system user for Node Exporter and download Node Exporter:
-
-   ```bash
-   sudo useradd --system --no-create-home --shell /bin/false node_exporter
-   wget https://github.com/prometheus/node_exporter/releases/download/v1.6.1/node_exporter-1.6.1.linux-amd64.tar.gz
-   ```
-
-   Extract Node Exporter files, move the binary, and clean up:
-
-   ```bash
-   tar -xvf node_exporter-1.6.1.linux-amd64.tar.gz
-   sudo mv node_exporter-1.6.1.linux-amd64/node_exporter /usr/local/bin/
-   rm -rf node_exporter*
-   ```
-
    Create a systemd unit configuration file for Node Exporter:
 
    ```bash
-   sudo nano /etc/systemd/system/node_exporter.service
+   sudo vi /etc/systemd/system/node_exporter.service
    ```
 
    Add the following content to the `node_exporter.service` file:
@@ -552,57 +467,14 @@ sudo systemctl restart jenkins
 
 ####Grafana
 
-**Install Grafana on Ubuntu 22.04 and Set it up to Work with Prometheus**
+**Grafana on Ubuntu 24.04 and Set it up to Work with Prometheus**
 
-**Step 1: Install Dependencies:**
-
-First, ensure that all necessary dependencies are installed:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y apt-transport-https software-properties-common
-```
-
-**Step 2: Add the GPG Key:**
-
-Add the GPG key for Grafana:
-
-```bash
-wget -q -O - https://packages.grafana.com/gpg.key | sudo apt-key add -
-```
-
-**Step 3: Add Grafana Repository:**
-
-Add the repository for Grafana stable releases:
-
-```bash
-echo "deb https://packages.grafana.com/oss/deb stable main" | sudo tee -a /etc/apt/sources.list.d/grafana.list
-```
-
-**Step 4: Update and Install Grafana:**
-
-Update the package list and install Grafana:
-
-```bash
-sudo apt-get update
-sudo apt-get -y install grafana
-```
 
 **Step 5: Enable and Start Grafana Service:**
 
 To automatically start Grafana after a reboot, enable the service:
 
-```bash
-sudo systemctl enable grafana-server
-```
-
-Then, start Grafana:
-
-```bash
-sudo systemctl start grafana-server
-```
-
-**Step 6: Check Grafana Status:**
+**Step 1: Check Grafana Status:**
 
 Verify the status of the Grafana service to ensure it's running correctly:
 
@@ -610,7 +482,7 @@ Verify the status of the Grafana service to ensure it's running correctly:
 sudo systemctl status grafana-server
 ```
 
-**Step 7: Access Grafana Web Interface:**
+**Step 2: Access Grafana Web Interface:**
 
 Open a web browser and navigate to Grafana using your server's IP address. The default port for Grafana is 3000. For example:
 
@@ -618,11 +490,11 @@ Open a web browser and navigate to Grafana using your server's IP address. The d
 
 You'll be prompted to log in to Grafana. The default username is "admin," and the default password is also "admin."
 
-**Step 8: Change the Default Password:**
+**Step 3: Change the Default Password:**
 
 When you log in for the first time, Grafana will prompt you to change the default password for security reasons. Follow the prompts to set a new password.
 
-**Step 9: Add Prometheus Data Source:**
+**Step 4: Add Prometheus Data Source:**
 
 To visualize metrics, you need to add a data source. Follow these steps:
 
@@ -638,7 +510,7 @@ To visualize metrics, you need to add a data source. Follow these steps:
   - Set the "URL" to `http://localhost:9090` (assuming Prometheus is running on the same server).
   - Click the "Save & Test" button to ensure the data source is working.
 
-**Step 10: Import a Dashboard:**
+**Step 5: Import a Dashboard:**
 
 To make it easier to view metrics, you can import a pre-configured dashboard. Follow these steps:
 
@@ -743,5 +615,7 @@ To deploy an application with ArgoCD, you can follow these steps, which I'll out
 
 **Phase 7: Cleanup**
 
-1. **Cleanup AWS EC2 Instances:**
-    - Terminate AWS EC2 instances that are no longer needed.
+1. **Cleanup AWS EC2 Instances and resources:**
+    ```bash
+    pulumi destroy
+    ```
